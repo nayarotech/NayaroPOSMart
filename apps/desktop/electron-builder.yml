@@ -1,0 +1,21 @@
+appId: np.nayarotech.srmart.pos
+productName: Nayaro POS
+copyright: Nayaro Tech
+directories:
+  output: release
+files:
+  - dist/**
+  - package.json
+asarUnpack:
+  - "**/*.node"
+win:
+  target: [nsis]
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  perMachine: false
+mac:
+  target: [dmg]
+  category: public.app-category.business
+linux:
+  target: [AppImage]

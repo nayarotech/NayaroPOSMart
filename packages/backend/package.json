@@ -1,0 +1,27 @@
+{
+  "name": "@srmart/backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "migrate:check": "vitest run tests/migrations.test.ts"
+  },
+  "dependencies": {
+    "@srmart/shared": "0.1.0",
+    "better-sqlite3": "13.0.3",
+    "bwip-js": "4.7.0",
+    "papaparse": "5.7.0",
+    "selfsigned": "5.5.0",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "7.6.13",
+    "@types/node": "22.18.6",
+    "@types/papaparse": "5.3.16",
+    "vitest": "5.0.5"
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "name": "@srmart/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "productName": "Nayaro POS",
+  "description": "Nayaro POS desktop shell (Electron)",
+  "author": "Nayaro Tech",
+  "main": "dist/main.cjs",
+  "scripts": {
+    "build:main": "node build.mjs",
+    "build": "node build.mjs",
+    "dev": "node build.mjs && concurrently -k -n vite,electron \"npm run dev -w @srmart/frontend --prefix ../..\" \"wait-on tcp:5273 && cross-env SRMART_DEV_URL=http://localhost:5273 node run-electron.mjs\"",
+    "start": "node build.mjs && node run-electron.mjs",
+    "smoke": "node build.mjs && node run-electron.mjs --smoke-test",
+    "rebuild:electron": "electron-rebuild -f -o better-sqlite3 -m ../..",
+    "dist": "electron-builder --config electron-builder.yml",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "better-sqlite3": "13.0.3"
+  },
+  "devDependencies": {
+    "@srmart/backend": "0.1.0",
+    "@srmart/shared": "0.1.0",
+    "@electron/rebuild": "4.2.1",
+    "concurrently": "10.0.6",
+    "cross-env": "10.0.0",
+    "electron": "44.9.3",
+    "electron-builder": "26.18.0",
+    "esbuild": "0.28.2",
+    "wait-on": "8.0.5"
+  }
+}

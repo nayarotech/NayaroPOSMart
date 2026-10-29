@@ -1,0 +1,15 @@
+node_modules/
+dist/
+release/
+out/
+*.log
+.DS_Store
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+.tmp/
+docs/*
+
+frontend/dist/
+.env
+.env.*

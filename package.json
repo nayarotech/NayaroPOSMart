@@ -1,0 +1,35 @@
+{
+  "name": "srmart-pos",
+  "private": true,
+  "version": "0.1.0",
+  "description": "SR Mart offline-first POS & inventory (demo MVP) \u2014 powered by Nayaro Tech",
+  "workspaces": [
+    "packages/shared",
+    "packages/backend",
+    "apps/frontend",
+    "apps/mobile",
+    "apps/desktop"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w @srmart/desktop",
+    "build": "npm run build -w @srmart/frontend && npm run build -w @srmart/mobile && npm run build -w @srmart/desktop",
+    "start": "npm run start -w @srmart/desktop",
+    "dist": "npm run build && npm run dist -w @srmart/desktop",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "eslint .",
+    "test": "npm run test -w @srmart/backend",
+    "rebuild:electron": "npm run rebuild:electron -w @srmart/desktop",
+    "rebuild:node": "npm rebuild better-sqlite3",
+    "migrate:check": "npm run migrate:check -w @srmart/backend",
+    "smoke": "npm run smoke -w @srmart/desktop"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.35.0",
+    "eslint": "9.35.0",
+    "eslint-plugin-react-hooks": "5.2.0",
+    "globals": "16.4.0",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.44.0"
+  },
+  "type": "module"
+}

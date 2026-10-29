@@ -1,0 +1,25 @@
+{
+  "name": "@srmart/mobile",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port 5274 --host",
+    "build": "vite build",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@srmart/shared": "0.1.0",
+    "@zxing/browser": "0.2.1",
+    "@zxing/library": "0.23.0",
+    "lucide-react": "0.544.0",
+    "react": "19.1.1",
+    "react-dom": "19.1.1"
+  },
+  "devDependencies": {
+    "@types/react": "19.1.13",
+    "@types/react-dom": "19.1.9",
+    "@vitejs/plugin-react": "5.0.3",
+    "vite": "7.3.7"
+  }
+}
