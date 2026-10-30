@@ -1,7 +1,7 @@
 import { app, dialog, ipcMain, shell, type IpcMainInvokeEvent } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
-import { lanUrls, qrSvg, renderLabelsHtml, renderReceiptHtml, requireRole, toAppError, AppError, verifyPassword } from '@srmart/backend';
+import { lanUrls, qrSvg, renderShiftHtml, renderLabelsHtml, renderReceiptHtml, requireRole, toAppError, AppError, verifyPassword } from '@srmart/backend';
 import type { ApiChannel, ApiEnvelope, ApiIn, ApiOut, Role, ScannerStatus, SessionUser } from '@srmart/shared';
 import { API_CHANNELS, changePasswordSchema, labelJobSchema } from '@srmart/shared';
 import type { AppState } from './appState';
@@ -152,6 +152,26 @@ export function registerIpc(state: AppState, printers: PrinterService, isTrusted
       },
     },
     'printers.list': { access: 'user', run: () => printers.list() },
+
+    'shifts.current': { access: 'user', run: () => s().shifts.current() },
+    'shifts.list': { access: 'user', run: (c) => s().shifts.list(u(c)) },
+    'shifts.get': { access: 'user', run: (c) => s().shifts.get(u(c), num(c.input?.id)) },
+    'shifts.open': { access: 'user', run: (c) => s().shifts.open(u(c), c.input) },
+    'shifts.move': { access: 'user', run: (c) => s().shifts.move(u(c), c.input) },
+    'shifts.close': { access: 'user', run: (c) => s().shifts.close(u(c), c.input) },
+    'shifts.print': {
+      access: 'user', run: async (c) => {
+        const shift = s().shifts.get(u(c), num(c.input?.id));
+        const mode = c.input?.mode === 'pdf' ? 'pdf' : 'dialog';
+        return printers.print(renderShiftHtml(shift, s().settings.get()), { mode, printerName: null, title: `shift-${shift.id}` });
+      },
+    },
+    'carts.current': { access: 'user', run: (c) => s().carts.current(u(c)) },
+    'carts.list': { access: 'user', run: (c) => s().carts.list(u(c)) },
+    'carts.save': { access: 'user', run: (c) => s().carts.save(u(c), c.input) },
+    'carts.park': { access: 'user', run: (c) => s().carts.park(u(c), c.input) },
+    'carts.resume': { access: 'user', run: (c) => s().carts.resume(u(c), c.input) },
+    'carts.discard': { access: 'user', run: (c) => s().carts.discard(u(c), c.input) },
 
     'sales.quote': { access: 'user', run: (c) => s().sales.quote(u(c), c.input) },
     'sales.complete': { access: 'user', run: (c) => s().sales.complete(u(c), c.input) },
@@ -338,7 +358,7 @@ export function registerIpc(state: AppState, printers: PrinterService, isTrusted
           enabled: cfg.enabled,
           running,
           port: cfg.port,
-          urls: running ? lanUrls(cfg.port) : [],
+          urls: running ? lanUrls(cfg.port).map((url) => url.replace('http://', 'https://')) : [],
           message: running ? 'Mobile dashboard is available on the shop network' : cfg.enabled ? 'Enabled but not running — check the port' : 'Disabled',
         };
       },

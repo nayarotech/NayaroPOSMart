@@ -10,12 +10,16 @@ import { PurchaseService } from './purchases';
 import { ReportService } from './reports';
 import { SalesService } from './sales';
 import { SettingsService } from './settings';
+import { ShiftService } from './shifts';
+import { CartService } from './carts';
 import { UserService } from './users';
 
 export function createServices(ctx: Ctx) {
   const auth = new AuthService(ctx);
   return {
     ctx,
+    shifts: new ShiftService(ctx),
+    carts: new CartService(ctx),
     auth,
     fiscal: new FiscalService(ctx),
     products: new ProductService(ctx),

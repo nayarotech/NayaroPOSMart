@@ -21,6 +21,37 @@ interface DayRow {
   kept_net: number;
 }
 
+// Immutable sale snapshots plus dated reversals keep closed periods stable.
+// Cumulative allocation matches refund rounding, including repeated partial returns.
+const ACTIVITY = `WITH returned AS (
+  SELECT ri.*, r.business_date, r.restock, si.product_id, si.name, si.quantity sold_qty,
+    si.line_total_paisa, si.unit_cost_paisa, si.promo_discount_paisa,
+    COALESCE((SELECT SUM(prev.quantity) FROM sales_return_items prev
+      WHERE prev.sale_item_id = ri.sale_item_id AND prev.id < ri.id), 0) prior_qty
+  FROM sales_return_items ri JOIN sales_returns r ON r.id = ri.return_id
+  JOIN sale_items si ON si.id = ri.sale_item_id
+), activity AS (
+  SELECT s.business_date date, si.product_id, si.name, si.quantity qty,
+    si.unit_price_paisa * si.quantity gross, si.discount_paisa disc, si.tax_paisa tax,
+    si.line_total_paisa net, 0 refund, si.unit_cost_paisa * si.quantity cogs,
+    si.promotion_name, si.promo_discount_paisa promo
+  FROM sale_items si JOIN sales s ON s.id = si.sale_id
+  UNION ALL
+  SELECT business_date, product_id, name, -quantity, 0, 0,
+    -(refund_paisa - (ROUND(line_total_paisa * 1.0 * (prior_qty + quantity) / sold_qty) - ROUND(line_total_paisa * 1.0 * prior_qty / sold_qty))),
+    -(ROUND(line_total_paisa * 1.0 * (prior_qty + quantity) / sold_qty) - ROUND(line_total_paisa * 1.0 * prior_qty / sold_qty)),
+    refund_paisa, CASE WHEN restock = 1 THEN -unit_cost_paisa * quantity ELSE 0 END,
+    NULL, 0 FROM returned
+  UNION ALL
+  SELECT p.business_date, si.product_id, si.name, -si.quantity,
+    -si.unit_price_paisa * si.quantity, -si.discount_paisa, -si.tax_paisa,
+    -si.line_total_paisa, si.gross_paisa, -si.unit_cost_paisa * si.quantity,
+    si.promotion_name, -si.promo_discount_paisa
+  FROM sale_items si JOIN sales s ON s.id = si.sale_id
+  JOIN payments p ON p.sale_id = s.id AND p.kind = 'refund' AND p.return_id IS NULL
+  WHERE s.status = 'voided'
+)`;
+
 const emptyTotals = (): SalesTotals => ({
   salesCount: 0,
   grossSalesPaisa: 0,
@@ -58,8 +89,8 @@ function addDays(iso: string, n: number) {
 }
 
 /**
- * All revenue figures exclude voided sales. "Estimated gross margin" = net sales of items not
- * returned minus the cost price recorded at the time of sale. It is NOT profit: it ignores
+ * Activity is dated when it occurs: sales, returns and void reversals.
+ * Estimated gross margin subtracts recorded costs; only restocked returns reverse costs. It is NOT profit: it ignores
  * rent, wages, wastage, supplier discounts and taxes.
  */
 export class ReportService {
@@ -78,20 +109,17 @@ export class ReportService {
   }
 
   private dayRows(from: string, to: string): DayRow[] {
-    return this.ctx.db
-      .prepare(
-        `WITH s AS (SELECT * FROM sales WHERE business_date BETWEEN ? AND ? AND status != 'voided'),
-         head AS (SELECT business_date AS date, COUNT(*) sales_count, SUM(subtotal_paisa) gross, SUM(discount_paisa) disc,
-                    SUM(tax_paisa) tax, SUM(total_paisa - tax_paisa) net FROM s GROUP BY business_date),
-         ref AS (SELECT s.business_date AS date, SUM(r.refund_paisa) refunds FROM sales_returns r JOIN s ON s.id = r.sale_id GROUP BY s.business_date),
-         items AS (SELECT s.business_date AS date,
-                    SUM(si.unit_cost_paisa * (si.quantity - si.returned_quantity)) cogs,
-                    SUM(si.line_total_paisa * 1.0 * (si.quantity - si.returned_quantity) / si.quantity) kept_net
-                   FROM sale_items si JOIN s ON s.id = si.sale_id GROUP BY s.business_date)
-         SELECT head.*, COALESCE(ref.refunds, 0) refunds, COALESCE(items.cogs, 0) cogs, COALESCE(items.kept_net, 0) kept_net
-         FROM head LEFT JOIN ref ON ref.date = head.date LEFT JOIN items ON items.date = head.date ORDER BY head.date`,
-      )
-      .all(from, to) as DayRow[];
+    return this.ctx.db.prepare(`${ACTIVITY},
+      dates AS (SELECT date FROM activity WHERE date BETWEEN :from AND :to
+                UNION SELECT business_date FROM sales WHERE business_date BETWEEN :from AND :to),
+      counts AS (SELECT business_date date, COUNT(*) n FROM sales GROUP BY business_date),
+      amounts AS (SELECT date, SUM(gross) gross, SUM(disc) disc, SUM(tax) tax,
+        SUM(net) net, SUM(refund) refunds, SUM(cogs) cogs FROM activity GROUP BY date)
+      SELECT d.date, COALESCE(c.n, 0) sales_count, COALESCE(a.gross, 0) gross,
+        COALESCE(a.disc, 0) disc, COALESCE(a.tax, 0) tax, COALESCE(a.net, 0) net,
+        COALESCE(a.refunds, 0) refunds, COALESCE(a.cogs, 0) cogs, COALESCE(a.net, 0) kept_net
+      FROM dates d LEFT JOIN counts c ON c.date = d.date LEFT JOIN amounts a ON a.date = d.date
+      ORDER BY d.date`).all({ from, to }) as DayRow[];
   }
 
   totals(from: string, to: string): SalesTotals {
@@ -131,45 +159,30 @@ export class ReportService {
     const payments = (
       this.ctx.db
         .prepare(
-          `SELECT p.method, p.kind, COUNT(*) count, SUM(p.amount_paisa) amount FROM payments p JOIN sales s ON s.id = p.sale_id
-           WHERE s.business_date BETWEEN ? AND ? GROUP BY p.method, p.kind ORDER BY p.kind, amount DESC`,
+          `SELECT p.method, p.kind, COUNT(*) count, SUM(p.amount_paisa) amount FROM payments p
+           WHERE p.business_date BETWEEN ? AND ? GROUP BY p.method, p.kind ORDER BY p.kind, amount DESC`,
         )
         .all(r.from, r.to) as { method: string; kind: 'payment' | 'refund'; count: number; amount: number }[]
     ).map((p) => ({ method: p.method, kind: p.kind, count: p.count, amountPaisa: p.amount }));
 
-    const topProducts = (
-      this.ctx.db
-        .prepare(
-          `SELECT si.product_id, si.name, SUM(si.quantity - si.returned_quantity) qty,
-             SUM(si.line_total_paisa * 1.0 * (si.quantity - si.returned_quantity) / si.quantity) net,
-             SUM(si.unit_cost_paisa * (si.quantity - si.returned_quantity)) cogs
-           FROM sale_items si JOIN sales s ON s.id = si.sale_id
-           WHERE s.business_date BETWEEN ? AND ? AND s.status != 'voided'
-           GROUP BY si.product_id ORDER BY net DESC LIMIT 10`,
-        )
-        .all(r.from, r.to) as { product_id: number; name: string; qty: number; net: number; cogs: number }[]
-    ).map((x) => ({ productId: x.product_id, name: x.name, quantity: x.qty, netPaisa: Math.round(x.net), estimatedMarginPaisa: Math.round(x.net) - x.cogs }));
+    const topProducts = (this.ctx.db.prepare(`${ACTIVITY}
+      SELECT product_id, MAX(name) name, SUM(qty) qty, SUM(net) net, SUM(cogs) cogs
+      FROM activity WHERE date BETWEEN ? AND ? GROUP BY product_id ORDER BY net DESC LIMIT 10`)
+      .all(r.from, r.to) as { product_id: number; name: string; qty: number; net: number; cogs: number }[])
+      .map((x) => ({ productId: x.product_id, name: x.name, quantity: x.qty, netPaisa: x.net, estimatedMarginPaisa: x.net - x.cogs }));
 
-    const byCategory = (
-      this.ctx.db
-        .prepare(
-          `SELECT COALESCE(c.name, 'Uncategorised') category, SUM(si.quantity - si.returned_quantity) qty,
-             SUM(si.line_total_paisa * 1.0 * (si.quantity - si.returned_quantity) / si.quantity) net
-           FROM sale_items si JOIN sales s ON s.id = si.sale_id JOIN products p ON p.id = si.product_id LEFT JOIN categories c ON c.id = p.category_id
-           WHERE s.business_date BETWEEN ? AND ? AND s.status != 'voided'
-           GROUP BY category ORDER BY net DESC`,
-        )
-        .all(r.from, r.to) as { category: string; qty: number; net: number }[]
-    ).map((x) => ({ category: x.category, quantity: x.qty, netPaisa: Math.round(x.net) }));
+    const byCategory = (this.ctx.db.prepare(`${ACTIVITY}
+      SELECT COALESCE(c.name, 'Uncategorised') category, SUM(a.qty) qty, SUM(a.net) net
+      FROM activity a JOIN products p ON p.id = a.product_id LEFT JOIN categories c ON c.id = p.category_id
+      WHERE a.date BETWEEN ? AND ? GROUP BY category ORDER BY net DESC`)
+      .all(r.from, r.to) as { category: string; qty: number; net: number }[])
+      .map((x) => ({ category: x.category, quantity: x.qty, netPaisa: x.net }));
 
-    const promotions = (
-      this.ctx.db
-        .prepare(
-          `SELECT si.promotion_name name, COUNT(*) lines, SUM(si.promo_discount_paisa) disc FROM sale_items si JOIN sales s ON s.id = si.sale_id
-           WHERE s.business_date BETWEEN ? AND ? AND s.status != 'voided' AND si.promo_discount_paisa > 0 GROUP BY si.promotion_name ORDER BY disc DESC`,
-        )
-        .all(r.from, r.to) as { name: string; lines: number; disc: number }[]
-    ).map((x) => ({ name: x.name, lines: x.lines, discountPaisa: x.disc }));
+    const promotions = (this.ctx.db.prepare(`${ACTIVITY}
+      SELECT promotion_name name, SUM(CASE WHEN promo > 0 THEN 1 ELSE -1 END) lines, SUM(promo) disc
+      FROM activity WHERE date BETWEEN ? AND ? AND promo != 0 GROUP BY promotion_name ORDER BY disc DESC`)
+      .all(r.from, r.to) as { name: string; lines: number; disc: number }[])
+      .map((x) => ({ name: x.name, lines: x.lines, discountPaisa: x.disc }));
 
     return {
       from: r.from,
@@ -246,7 +259,7 @@ export class ReportService {
     const fiscal = this.fiscal.current();
     const today = businessDate(this.ctx.clock);
     const counts = this.ctx.db
-      .prepare("SELECT SUM(is_demo = 1) demo, SUM(is_demo = 0) real FROM sales WHERE business_date = ? AND status != 'voided'")
+      .prepare("SELECT SUM(is_demo = 1) demo, SUM(is_demo = 0) real FROM sales WHERE business_date = ?")
       .get(today) as { demo: number | null; real: number | null };
     const weekStart = addDays(today, -6);
     const daily = new Map(this.dayRows(weekStart, today).map((d) => [d.date, d]));

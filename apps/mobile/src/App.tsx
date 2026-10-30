@@ -36,7 +36,11 @@ type Tab = 'home' | 'sales' | 'stock' | 'fy';
 export function App() {
   const [token, setToken] = useState<string | null>(() => store(TOKEN_KEY));
   if (!token) return <Login onToken={(t) => (store(TOKEN_KEY, t), setToken(t))} />;
-  return <Dashboard token={token} onLogout={() => (store(TOKEN_KEY, null), setToken(null))} />;
+  return <Dashboard token={token} onLogout={() => {
+    void fetch('/api/logout', { method: 'POST', headers: { Authorization: `Bearer ${token}` } }).catch(() => undefined);
+    store(TOKEN_KEY, null);
+    setToken(null);
+  }} />;
 }
 
 function Login({ onToken }: { onToken: (t: string) => void }) {
@@ -147,6 +151,7 @@ function Totals({ t, title }: { t: SalesTotals; title: string }) {
     <div className="card">
       <div className="label">{title}</div>
       <div className="big">{npr(t.netSalesPaisa)}</div>
+      <p className="tiny muted">After returns and void reversals on their activity date · excludes tax</p>
       <div className="grid2">
         <div><div className="label">Transactions</div><b>{t.salesCount}</b></div>
         <div><div className="label">Discounts</div><b>{npr(t.discountPaisa)}</b></div>
@@ -158,7 +163,7 @@ function Totals({ t, title }: { t: SalesTotals; title: string }) {
 }
 
 function HomeTab({ s, onSale }: { s: MobileSummary; onSale: (id: number) => void }) {
-  const max = Math.max(1, ...s.last7Days.map((d) => d.netSalesPaisa));
+  const max = Math.max(1, ...s.last7Days.map((d) => Math.abs(d.netSalesPaisa)));
   return (
     <>
       <Totals t={s.today} title="Today's net sales" />
@@ -167,8 +172,8 @@ function HomeTab({ s, onSale }: { s: MobileSummary; onSale: (id: number) => void
         <div className="bars">
           {s.last7Days.map((d) => (
             <div key={d.date} className="barcol">
-              <div className="bar" style={{ height: `${Math.max(2, (d.netSalesPaisa / max) * 100)}%` }} />
-              <span>{d.date.slice(8)}</span>
+              <div className="bar" title={`${d.date}: ${npr(d.netSalesPaisa)}`} style={{ height: `${Math.max(2, (Math.abs(d.netSalesPaisa) / max) * 100)}%`, ...(d.netSalesPaisa < 0 ? { background: '#c62828' } : {}) }} />
+              <span>{d.netSalesPaisa < 0 ? '− ' : ''}{d.date.slice(8)}</span>
             </div>
           ))}
         </div>

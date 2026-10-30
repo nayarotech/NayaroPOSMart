@@ -1,23 +1,17 @@
 import type { Product, SaleDetail, SaleQuote, ScannerStatus } from '@srmart/shared';
 import { paisaToRupeesInput, parseRupees } from '@srmart/shared';
 import { Banknote, CheckCircle2, Gift, Minus, Percent, Plus, Printer, ScanBarcode, Search, ShoppingCart, Smartphone, Tag, Trash2, XCircle } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, ApiError, errMsg } from '../api';
-import { ApprovalDialog, Banner, Empty, Field, Modal, MoneyInput, useToast } from '../components/ui';
+import { ApprovalDialog, Banner, Empty, ErrorState, Field, Loading, Modal, MoneyInput, useAsync, useToast } from '../components/ui';
+import { ParkCartDialog, ParkedCartsDialog } from '../components/ParkedCarts';
+import { queueCartTask, useCheckoutCart, type CheckoutLine } from '../hooks/useCheckoutCart';
 import { PhoneScannerModal } from '../components/PhoneScanner';
 import { npr } from '../lib/format';
 import { useSession } from '../session';
 
-interface Line {
-  productId: number;
-  name: string;
-  sku: string;
-  unit: string;
-  unitPricePaisa: number;
-  quantity: number;
-  discountPaisa: number;
-  qtyAvailable: number;
-}
+type Line = CheckoutLine;
 
 function beep(ok: boolean) {
   try {
@@ -35,14 +29,18 @@ function beep(ok: boolean) {
   }
 }
 
-const newTxnId = () => crypto.randomUUID();
-
 export function Pos() {
   const { settings, user } = useSession();
   const toast = useToast();
-  const [lines, setLines] = useState<Line[]>([]);
-  const [orderDiscountPaisa, setOrderDiscount] = useState(0);
-  const [quote, setQuote] = useState<SaleQuote | null>(null);
+  const cart = useCheckoutCart();
+  const { lines, setLines, orderDiscountPaisa, setOrderDiscount } = cart;
+  const shift = useAsync(() => api('shifts.current'), []);
+  const [cartBusy, setCartBusy] = useState(false);
+  const [parkOpen, setParkOpen] = useState(false);
+  const [parkedOpen, setParkedOpen] = useState(false);
+  const [quoted, setQuoted] = useState<{ key: string; value: SaleQuote } | null>(null);
+  const quoteKey = JSON.stringify({ lines, orderDiscountPaisa });
+  const quote = quoted?.key === quoteKey ? quoted.value : null;
   const [quoteError, setQuoteError] = useState<string | null>(null);
   const [scan, setScan] = useState('');
   const [scanMsg, setScanMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -56,14 +54,28 @@ export function Pos() {
   const [done, setDone] = useState<SaleDetail | null>(null);
   const [phoneOpen, setPhoneOpen] = useState(false);
   const [phones, setPhones] = useState(0);
-  const txnId = useRef(newTxnId());
+  const txnId = useRef(cart.id);
+  txnId.current = cart.id;
   const lastScan = useRef<{ code: string; at: number }>({ code: '', at: 0 });
+  useEffect(() => { lastScan.current = { code: '', at: 0 }; setScanMsg(null); setScan(''); }, [cart.id]);
   const scanRef = useRef<HTMLInputElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const debounceMs = settings?.pos.scanDebounceMs ?? 350;
   const usbEnabled = settings?.scanner?.usbEnabled ?? true;
   const phoneEnabled = settings?.scanner?.phoneEnabled ?? false;
-  const modalOpen = payOpen || discountOpen || !!lineEdit || !!done || phoneOpen;
+  const modalOpen = payOpen || discountOpen || !!lineEdit || !!done || phoneOpen || parkOpen || parkedOpen || cartBusy;
+  const inputBlocked = useRef(false);
+  inputBlocked.current = modalOpen || !cart.ready;
+  useEffect(() => { const timer = setInterval(shift.reload, 30_000); return () => clearInterval(timer); }, [shift.reload]);
+
+  const flushCart = cart.flush;
+  const requestPayment = useCallback(async () => {
+    if (!quote) return;
+    setCartBusy(true);
+    inputBlocked.current = true;
+    try { await flushCart(); setPayOpen(true); } catch { /* The recovery banner shows save failures. */ }
+    finally { setCartBusy(false); }
+  }, [quote, flushCart]);
 
   const focusScan = useCallback(() => {
     setTimeout(() => scanRef.current?.focus(), 0);
@@ -73,21 +85,21 @@ export function Pos() {
   // Authoritative totals from the main process whenever the cart changes.
   useEffect(() => {
     if (!lines.length) {
-      setQuote(null);
+      setQuoted(null);
       setQuoteError(null);
       return;
     }
     let live = true;
     const t = setTimeout(() => {
       api('sales.quote', { lines: lines.map((l) => ({ productId: l.productId, quantity: l.quantity, discountPaisa: l.discountPaisa })), orderDiscountPaisa })
-        .then((q) => live && (setQuote(q), setQuoteError(null)))
-        .catch((e) => live && (setQuote(null), setQuoteError(errMsg(e))));
+        .then((q) => live && (setQuoted({ key: quoteKey, value: q }), setQuoteError(null)))
+        .catch((e) => live && (setQuoted(null), setQuoteError(errMsg(e))));
     }, 80);
     return () => {
       live = false;
       clearTimeout(t);
     };
-  }, [lines, orderDiscountPaisa]);
+  }, [lines, orderDiscountPaisa, quoteKey]);
 
   const addProduct = useCallback((p: Product, qty = 1) => {
     setLines((cur) => {
@@ -102,9 +114,11 @@ export function Pos() {
     });
     setFlashId(p.id);
     setTimeout(() => setFlashId(null), 600);
-  }, []);
+  }, [setLines]);
 
   async function handleScan(raw: string, source: 'usb' | 'phone' = 'usb') {
+    if (inputBlocked.current) return;
+    const targetCart = txnId.current;
     const code = raw.trim();
     if (source === 'usb') setScan('');
     if (!code) return;
@@ -117,6 +131,7 @@ export function Pos() {
     lastScan.current = { code, at: now };
     try {
       const p = await api('products.lookupBarcode', { code });
+      if (targetCart !== txnId.current || inputBlocked.current) return;
       if (!p) {
         beep(false);
         setScanMsg({ ok: false, text: `Unknown barcode "${code}". Search by name, or register the barcode under Products.` });
@@ -170,12 +185,11 @@ export function Pos() {
     focusScan();
   };
 
-  const clearCart = () => {
-    setLines([]);
-    setOrderDiscount(0);
-    txnId.current = newTxnId();
-    setScanMsg(null);
-    focusScan();
+  const clearCart = async () => {
+    setCartBusy(true); inputBlocked.current = true;
+    try { await cart.clear(); setScanMsg(null); focusScan(); }
+    catch (e) { toast.error(e); }
+    finally { setCartBusy(false); }
   };
 
   // Keyboard: F2 scan, F4 search, F8 discount, F9/F12 pay, Esc clears search.
@@ -185,7 +199,7 @@ export function Pos() {
       if (e.key === 'F2') (e.preventDefault(), scanRef.current?.focus());
       else if (e.key === 'F4') (e.preventDefault(), searchRef.current?.focus());
       else if (e.key === 'F8' && lines.length) (e.preventDefault(), setDiscountOpen(true));
-      else if ((e.key === 'F9' || e.key === 'F12') && quote) (e.preventDefault(), setPayOpen(true));
+      else if ((e.key === 'F9' || e.key === 'F12') && quote) (e.preventDefault(), void requestPayment());
       else if (e.key === 'Escape') (setSearch(''), focusScan());
       else {
         // Keystrokes typed while nothing is focused (e.g. a scanner after clicking the page) go to the scan box.
@@ -196,16 +210,20 @@ export function Pos() {
     };
     window.addEventListener('keydown', k);
     return () => window.removeEventListener('keydown', k);
-  }, [modalOpen, lines.length, quote, focusScan, usbEnabled]);
+  }, [modalOpen, lines.length, quote, focusScan, usbEnabled, requestPayment]);
 
   const setQty = (id: number, q: number) => setLines((cur) => cur.map((l) => (l.productId === id ? { ...l, quantity: Math.max(1, Math.min(10000, Math.floor(q) || 1)) } : l)));
   const remove = (id: number) => setLines((cur) => cur.filter((l) => l.productId !== id));
   const itemCount = useMemo(() => lines.reduce((a, l) => a + l.quantity, 0), [lines]);
   const quoteLine = (id: number) => quote?.lines.find((l) => l.productId === id);
 
+  if (!cart.ready) return cart.error ? <ErrorState error={cart.error} onRetry={cart.retry} /> : <Loading text="Recovering checkout…" />;
   return (
-    <div className="pos">
+    <fieldset className="pos" disabled={cartBusy} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
       <div className="pos-left">
+        <div className="row between wrap"><span className="small muted">{cart.error ? 'Cart not saved' : cart.saved ? 'Cart saved on this computer' : 'Saving cart…'}</span><div className="row"><button className="btn sm" disabled={!lines.length} onClick={() => setParkOpen(true)}>Park sale</button><button className="btn sm" onClick={() => setParkedOpen(true)}>Parked carts</button></div></div>
+        {cart.error && <Banner kind="danger">Cart recovery save failed: {cart.error} <button className="btn sm" onClick={cart.retry}>Retry save</button>. Keep checkout open until saved.</Banner>}
+        {shift.error ? <Banner kind="warn">Cannot check the till shift. <Link to="/shifts">Open cash shifts</Link> to review.</Banner> : shift.data ? <div className="small muted">Till shift #{shift.data.id} · {shift.data.openedByName} · <Link to="/shifts">Manage shift</Link></div> : !shift.loading && <Banner kind="warn">No cash shift is open. Payments will be outside till reconciliation. <Link to="/shifts">Open a shift</Link></Banner>}
         <div className="card scanbox">
           {usbEnabled ? (
           <div className="search grow">
@@ -346,10 +364,10 @@ export function Pos() {
           ))}
           {quote?.warnings.map((w) => <Banner key={w} kind="warn">{w}</Banner>)}
         </div>
-        <button className="btn primary xl" disabled={!quote} onClick={() => setPayOpen(true)}>
-          <Banknote size={22} /> Pay {quote ? npr(quote.totalPaisa) : ''} <kbd style={{ marginLeft: 6 }}>F9</kbd>
+        <button className="btn primary xl" disabled={!quote || !!cart.error} onClick={() => void requestPayment()}>
+          <Banknote size={22} /> {lines.length && !quote && !quoteError ? 'Updating total…' : `Pay ${quote ? npr(quote.totalPaisa) : ''}`} <kbd style={{ marginLeft: 6 }}>F9</kbd>
         </button>
-        <button className="btn" disabled={!lines.length} onClick={() => confirm('Clear the current sale?') && clearCart()}>Clear sale</button>
+        <button className="btn" disabled={!lines.length} onClick={() => confirm('Clear the current sale?') && void clearCart()}>Clear sale</button>
         <div className="card card-pad small muted">
           Cashier: <b>{user?.fullName}</b>. Prices come from the local database at the moment of sale. Works offline.
         </div>
@@ -379,23 +397,24 @@ export function Pos() {
           quote={quote}
           lines={lines}
           orderDiscountPaisa={orderDiscountPaisa}
-          txnId={txnId.current}
+          txnId={cart.id}
           onClose={() => (setPayOpen(false), focusScan())}
           onDone={(sale) => {
             setPayOpen(false);
             setDone(sale);
-            setLines([]);
-            setOrderDiscount(0);
-            txnId.current = newTxnId();
+            cart.completed();
+            shift.reload();
             setScanMsg(null);
             toast.ok(`Sale ${sale.receiptNo} completed`);
           }}
-          onQuoteStale={() => setLines((l) => [...l])}
+          onQuoteStale={() => { setQuoted(null); setPayOpen(false); setLines((l) => [...l]); }}
         />
       )}
       {done && <ReceiptModal sale={done} onClose={() => (setDone(null), focusScan())} />}
+      {parkOpen && <ParkCartDialog onClose={() => (setParkOpen(false), focusScan())} onPark={cart.park} />}
+      {parkedOpen && <ParkedCartsDialog onClose={() => (setParkedOpen(false), focusScan())} hasCurrent={!!lines.length} onResume={async (saved) => { await cart.resume(saved); toast.info('Cart resumed. Prices, offers and stock have been refreshed.'); }} />}
       {phoneOpen && <PhoneScannerModal onClose={() => (setPhoneOpen(false), focusScan())} />}
-    </div>
+    </fieldset>
   );
 }
 
@@ -465,7 +484,7 @@ function PaymentModal({ quote, lines, orderDiscountPaisa, txnId, onClose, onDone
     setBusy(true);
     setError(null);
     try {
-      const sale = await api('sales.complete', {
+      const sale = await queueCartTask(() => api('sales.complete', {
         lines: lines.map((l) => ({ productId: l.productId, quantity: l.quantity, discountPaisa: l.discountPaisa })),
         orderDiscountPaisa,
         clientTxnId: txnId,
@@ -473,7 +492,7 @@ function PaymentModal({ quote, lines, orderDiscountPaisa, txnId, onClose, onDone
         payment: { method, tenderedPaisa: tPaisa ?? 0, reference: reference || null },
         override: override ?? null,
         customer: custStarted ? { name: custName.trim(), phone: custPhone, consent: consent as true } : null,
-      });
+      }));
       onDone(sale);
     } catch (e) {
       if (e instanceof ApiError && e.code === 'APPROVAL_REQUIRED') setApproval(true);

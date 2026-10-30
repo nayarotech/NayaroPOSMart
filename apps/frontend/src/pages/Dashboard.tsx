@@ -59,12 +59,12 @@ export function Dashboard() {
         <div className="card stat">
           <div className="stat-label"><Wallet size={15} /> Today's net sales {data.dataMode === 'demo' && <DemoBadge />}</div>
           <div className="stat-value">{npr(t.netSalesPaisa)}</div>
-          <div className="stat-sub">Excludes voided sales{t.taxPaisa ? ' and tax' : ''}</div>
+          <div className="stat-sub">After returns and void reversals · excludes tax</div>
         </div>
         <div className="card stat">
           <div className="stat-label"><Receipt size={15} /> Transactions today</div>
           <div className="stat-value">{t.salesCount}</div>
-          <div className="stat-sub">Avg basket {npr(t.salesCount ? Math.round(t.netSalesPaisa / t.salesCount) : 0)}</div>
+          <div className="stat-sub">Sales made today · refunds may relate to earlier sales</div>
         </div>
         <div className="card stat">
           <div className="stat-label"><TrendingUp size={15} /> Estimated gross margin</div>

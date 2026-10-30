@@ -1,6 +1,7 @@
 import type { AppInfo, AppSettings, SessionUser } from '@srmart/shared';
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import { api } from './api';
+import { flushCartOperations } from './hooks/useCheckoutCart';
 
 interface SessionValue {
   user: SessionUser | null;
@@ -48,6 +49,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, [user, refreshSettings, refreshInfo]);
 
   const logout = useCallback(async () => {
+    await flushCartOperations();
     await api('auth.logout').catch(() => undefined);
     setUser(null);
     setSettings(null);

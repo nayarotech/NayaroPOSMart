@@ -65,7 +65,7 @@ export function Reports() {
         <Seg value={groupBy} onChange={setGroupBy} options={[{ value: 'day', label: 'Daily' }, { value: 'week', label: 'Weekly' }, { value: 'month', label: 'Monthly (BS)' }]} />
       </div>
 
-      <Banner kind="info"><b>How to read these numbers:</b> Net sales exclude voided sales and tax. “Estimated gross margin” = net sales of items not returned − cost price recorded at sale time. It is an estimate, <b>not profit</b> (it ignores rent, wages, wastage and other costs). Accuracy depends on cost prices being kept up to date.</Banner>
+      <Banner kind="info"><b>How to read these numbers:</b> Net sales exclude tax and include returns and void reversals on the day they happen. Refunds include tax. Transaction counts show sales made in the period. “Estimated gross margin” = net sales − recorded cost of goods; only restocked returns reverse cost. It is an estimate, <b>not profit</b> (it ignores rent, wages, wastage and other costs). Accuracy depends on cost prices being kept up to date.</Banner>
 
       {sales.error ? <ErrorState error={sales.error} onRetry={sales.reload} /> : !r ? <Loading /> : (
         <>

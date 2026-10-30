@@ -13,6 +13,7 @@ import { StockRepo } from '../repositories/stockRepo';
 import { AuthService } from './auth';
 import { FiscalService } from './fiscal';
 import { Outbox } from './outbox';
+import { CartService } from './carts';
 import { bestPromotion, PromotionService } from './promotions';
 
 /** Splits `amount` across `weights` proportionally using the largest-remainder method (sums exactly). */
@@ -168,6 +169,7 @@ export class SalesService {
       const raced = this.sales.idByClientTxn(c.clientTxnId);
       if (raced) return raced;
 
+      new CartService(this.ctx).complete(user, c.clientTxnId);
       const q = this.quote(user, c);
       if (q.totalPaisa !== c.expectedTotalPaisa) {
         throw new AppError('PRICE_CHANGED', 'Prices changed since the cart was built. Review the updated total and confirm again.');
@@ -242,7 +244,7 @@ export class SalesService {
           grossPaisa: grossAlloc[i]!,
         });
         this.stock.move({ productId: l.productId, type: 'sale', quantityDelta: -l.quantity, refType: 'sale_item', refId: itemId, refLabel: receiptNo, userId: user.id, isDemo });
-        if (p.trackExpiry) this.stock.consumeBatches(l.productId, l.quantity);
+        this.stock.consumeBatches(l.productId, l.quantity, itemId);
       });
 
       this.sales.insertPayment({ saleId: id, returnId: null, kind: 'payment', method: method.code, amountPaisa: q.totalPaisa, tenderedPaisa: tendered, changePaisa: change, reference: c.payment.reference ?? null, userId: user.id, isDemo });
@@ -287,6 +289,7 @@ export class SalesService {
       const approvedBy = this.approver(user, v.override, 'void');
       const isDemo = sale.isDemo ? 1 : 0;
       for (const item of this.sales.items(sale.id)) {
+        this.stock.restoreSaleBatches(item.id, 0, item.quantity);
         this.stock.move({ productId: item.productId, type: 'void', quantityDelta: item.quantity, reason: v.reason, refType: 'sale_item', refId: item.id, refLabel: sale.receiptNo, userId: user.id, isDemo });
       }
       const method = sale.payments.find((p) => p.kind === 'payment')?.method ?? 'cash';
@@ -331,6 +334,7 @@ export class SalesService {
         const riId = this.sales.insertReturnItem(returnId, l.itemId, l.qty, l.refund);
         this.sales.addReturnedQty(l.itemId, l.qty);
         if (r.restock) {
+          this.stock.restoreSaleBatches(l.itemId, items.get(l.itemId)!.returnedQuantity, l.qty);
           this.stock.move({ productId: l.productId, type: 'return', quantityDelta: l.qty, reason: r.reason, refType: 'return_item', refId: riId, refLabel: returnNo, userId: user.id, isDemo });
         }
       }

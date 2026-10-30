@@ -89,6 +89,7 @@ export class AppState {
   /** Restores a verified backup: safety backup of current data → close → atomic file swap → reopen + migrate. */
   restore(file: string): string {
     const source = this.backups.prepareRestore(file);
+    this.mobile?.revokeAll();
     const safety = this.backups.create('pre-restore');
     this.close();
     try {
@@ -155,7 +156,8 @@ export class AppState {
       this.mobile = null;
     }
     if (cfg.enabled && !this.mobile) {
-      const server = new MobileServer({ services: () => this.services, staticDir: this.mobileStaticDir(), port: cfg.port });
+      const tls = await ensureCertificate(path.join(app.getPath('userData'), 'certs'));
+      const server = new MobileServer({ services: () => this.services, staticDir: this.mobileStaticDir(), port: cfg.port, tls });
       try {
         await server.start();
         this.mobile = server;

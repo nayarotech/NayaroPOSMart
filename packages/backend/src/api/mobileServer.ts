@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
+import https from 'node:https';
 import os from 'node:os';
 import path from 'node:path';
 import type { MobileSummary, SessionUser } from '@srmart/shared';
@@ -13,13 +14,14 @@ import type { Services } from '../services';
  * - Disabled by default; an administrator enables it in Settings.
  * - Admin accounts only; bearer tokens live in memory and expire after 12 hours.
  * - No endpoint can change data. Checkout never depends on this server.
- * - Plain HTTP: use only on a trusted network or through a private VPN (see docs/MOBILE_ADMIN.md).
+ * - HTTPS with an offline local certificate; no plaintext authentication endpoint.
  */
 export interface MobileServerOptions {
   services: () => Services;
   staticDir: string | null;
   port: number;
   host?: string;
+  tls: { key: string; cert: string };
 }
 
 const TOKEN_TTL_MS = 12 * 60 * 60 * 1000;
@@ -44,7 +46,7 @@ export function lanUrls(port: number): string[] {
 
 export class MobileServer {
   private server: http.Server | null = null;
-  private tokens = new Map<string, { user: SessionUser; expires: number }>();
+  private tokens = new Map<string, { user: SessionUser; expires: number; credentialHash: string }>();
   private attempts = new Map<string, { n: number; until: number }>();
 
   constructor(private opts: MobileServerOptions) {}
@@ -59,7 +61,7 @@ export class MobileServer {
 
   start(): Promise<void> {
     if (this.server) return Promise.resolve();
-    const server = http.createServer((req, res) => {
+    const server = https.createServer(this.opts.tls, (req, res) => {
       this.handle(req, res).catch((err) => this.json(res, 500, { error: toAppError(err).message }));
     });
     this.server = server;
@@ -70,6 +72,10 @@ export class MobileServer {
       });
       server.listen(this.opts.port, this.opts.host ?? '0.0.0.0', () => resolve());
     });
+  }
+
+  revokeAll() {
+    this.tokens.clear();
   }
 
   stop(): Promise<void> {
@@ -114,7 +120,8 @@ export class MobileServer {
     }
     // Re-check that the account is still an active admin.
     const fresh = this.opts.services().auth.refresh(t.user.id);
-    if (!fresh || fresh.role !== 'admin') {
+    const account = this.opts.services().users.repo.byId(t.user.id);
+    if (!fresh || fresh.role !== 'admin' || fresh.mustChangePassword || account?.passwordHash !== t.credentialHash) {
       this.tokens.delete(token);
       return null;
     }
@@ -137,8 +144,9 @@ export class MobileServer {
         const body = await this.body(req);
         const user = svc.auth.login(body);
         if (user.role !== 'admin') return this.json(res, 403, { error: 'Only administrator accounts can use the mobile dashboard' });
+        if (user.mustChangePassword) return this.json(res, 403, { error: 'Change your password in the desktop app before using the mobile dashboard' });
         const token = crypto.randomBytes(32).toString('base64url');
-        this.tokens.set(token, { user, expires: Date.now() + TOKEN_TTL_MS });
+        this.tokens.set(token, { user, expires: Date.now() + TOKEN_TTL_MS, credentialHash: svc.users.repo.byId(user.id)!.passwordHash });
         this.attempts.delete(ip);
         return this.json(res, 200, { token, user, expiresInSeconds: TOKEN_TTL_MS / 1000 });
       } catch (err) {
@@ -148,6 +156,12 @@ export class MobileServer {
         this.attempts.set(ip, rec);
         return this.json(res, 401, { error: toAppError(err).message });
       }
+    }
+
+    if (p === '/api/logout' && req.method === 'POST') {
+      const token = (req.headers.authorization ?? '').replace(/^Bearer /, '');
+      this.tokens.delete(token);
+      return this.json(res, 200, { ok: true });
     }
 
     if (req.method !== 'GET') return this.json(res, 405, { error: 'This API is read-only' });
@@ -197,7 +211,7 @@ export class MobileServer {
     }
     const safe = path.normalize(decodeURIComponent(pathname)).replace(/^([/\\])+/, '');
     let file = path.resolve(root, safe || 'index.html');
-    if (!file.startsWith(path.resolve(root))) {
+    if (file !== path.resolve(root) && !file.startsWith(path.resolve(root) + path.sep)) {
       res.writeHead(403);
       return res.end();
     }

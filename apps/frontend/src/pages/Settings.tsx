@@ -220,7 +220,7 @@ function MobileSection({ s, up, dirty }: { s: AppSettings; up: <K extends keyof 
         </div>
       )}
       <Banner kind="warn">
-        Read-only and administrator-only, but it uses plain HTTP on the local network. Away from the shop, do <b>not</b> expose the port to the internet — use a private VPN (e.g. Tailscale/WireGuard) to reach the shop computer. Details: docs/MOBILE_ADMIN.md. Checkout never depends on this.
+        Read-only and administrator-only, served over HTTPS with a local self-signed certificate. The phone may ask you to trust the certificate on first use. Away from the shop, do <b>not</b> expose the port to the internet — use a private VPN (e.g. Tailscale/WireGuard) to reach the shop computer. Checkout never depends on this.
       </Banner>
     </Section>
   );

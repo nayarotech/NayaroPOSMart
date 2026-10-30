@@ -2,6 +2,7 @@ import type { Page, Payment, SaleDetail, SaleItem, SaleReturn, SaleStatus, SaleS
 import { toBsDate, parseLocalISODate } from '@srmart/shared';
 import type { Ctx } from '../context';
 import { bool } from '../db/database';
+import { businessDate } from '../clock';
 
 const SUMMARY_SELECT = `
   SELECT s.*, u.full_name AS cashier_name,
@@ -119,10 +120,10 @@ export class SaleRepo {
   insertPayment(p: { saleId: number; returnId: number | null; kind: 'payment' | 'refund'; method: string; amountPaisa: number; tenderedPaisa: number | null; changePaisa: number | null; reference: string | null; userId: number; isDemo: number }) {
     this.ctx.db
       .prepare(
-        `INSERT INTO payments (sale_id, return_id, kind, method, amount_paisa, tendered_paisa, change_paisa, reference, created_by, is_demo, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO payments (sale_id, return_id, kind, method, amount_paisa, tendered_paisa, change_paisa, reference, created_by, is_demo, created_at, business_date, shift_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT id FROM cash_shifts WHERE closed_at IS NULL))`,
       )
-      .run(p.saleId, p.returnId, p.kind, p.method, p.amountPaisa, p.tenderedPaisa, p.changePaisa, p.reference, p.userId, p.isDemo, this.ctx.clock.now().toISOString());
+      .run(p.saleId, p.returnId, p.kind, p.method, p.amountPaisa, p.tenderedPaisa, p.changePaisa, p.reference, p.userId, p.isDemo, this.ctx.clock.now().toISOString(), businessDate(this.ctx.clock));
   }
 
   setStatus(id: number, status: SaleStatus) {

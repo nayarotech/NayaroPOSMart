@@ -4,11 +4,13 @@ import {
 import { useEffect, type ReactNode } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import nayaroMark from '../assets/nayaro-mark.svg';
+import { useToast } from './ui';
 import { useSession } from '../session';
 
 const NAV: { to: string; label: string; icon: typeof Package; admin?: boolean; key?: string }[] = [
   { to: '/pos', label: 'Checkout', icon: ShoppingCart, key: 'F1' },
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, admin: true },
+  { to: '/shifts', label: 'Cash shifts & closing', icon: ClipboardList },
   { to: '/sales', label: 'Sales & receipts', icon: ReceiptText },
   { to: '/products', label: 'Products & barcodes', icon: Package },
   { to: '/labels', label: 'Label studio', icon: Tags },
@@ -59,6 +61,7 @@ export function FiscalChip() {
 export function Layout({ children }: { children: ReactNode }) {
   const { user, info, logout, isAdmin } = useSession();
   const nav = useNavigate();
+  const toast = useToast();
   useEffect(() => {
     const k = (e: KeyboardEvent) => {
       if (e.key === 'F1') {
@@ -106,7 +109,7 @@ export function Layout({ children }: { children: ReactNode }) {
               <div style={{ fontWeight: 650 }}>{user?.fullName}</div>
               <div className="faint" style={{ fontSize: 11 }}>{user?.role === 'admin' ? 'Administrator' : 'Cashier'}</div>
             </div>
-            <button className="btn ghost sm icon" title="Sign out" onClick={() => void logout()}>
+            <button className="btn ghost sm icon" title="Sign out" onClick={() => void logout().catch(toast.error)}>
               <LogOut />
             </button>
           </div>

@@ -107,12 +107,28 @@ other products get internal `NYM-000001`-style Code 128 barcodes. The header sho
   printed on the receipt (phone masked), become ineligible if the sale is voided or fully returned, and winners are
   drawn with a cryptographically random, audit-logged draw. Lucky-draw permission rules are listed in the compliance doc.
 
+## Cash shifts and parked carts
+
+- Open **Cash shifts & closing → Open shift** and enter the cash float already in the drawer. One shared till shift can be open at a time. Every payment/refund made while it is open is attached to that shift, regardless of cashier. Sales without a shift remain possible, with a checkout warning, and are excluded from reconciliation; historical payments are not assigned retroactively.
+- Record **Cash in / Cash out** with a reason. Expected cash uses the cash sale amount after change, not the cash tendered. Card/wallet totals are shown separately. Only the shift owner or an administrator can move cash or close the shift; cashiers see their own history and administrators see all shifts.
+- Choose **Count & close shift**, enter the actual counted cash, and explain any variance. If payments changed while counting, refresh and review again. Closed shifts are immutable. Print the closing report or save it as PDF. Close before handover, then let the next cashier open a new shift with the counted float.
+- Checkout automatically saves the current cart locally. Each cashier recovers their own active cart after restart/sign-in. **Park sale** gives it a name and starts a fresh cart; **Parked carts** resumes or discards one. Park or clear a nonempty current cart before resuming another. Up to 100 parked carts per cashier are supported; discard old carts explicitly.
+- Resuming preserves the transaction ID but refreshes product prices and stock. Current promotions and checkout rules are evaluated again. Completing payment retires the draft in the same transaction as the sale, preventing a delayed save from bringing back a paid cart. Cart drafts do not store payment credentials or customer contact details.
+
+## Reporting and mobile access
+
+Sales reports use activity dates: sales on the sale date, returns on the return date, and void reversals on the void date. Net sales exclude tax and include those reversals. Refund totals include tax; payment totals use each payment/refund business date. Transaction counts show sales made in the period, including sales later reversed. Earlier periods no longer change when a later return or void is recorded. Estimated margin reverses cost only for restocked returns; discarded returns retain their cost.
+
+The mobile dashboard now uses **HTTPS**. Replace old `http://` bookmarks with the address in Settings → Mobile admin app. The offline self-signed certificate must be trusted on the phone; PWA installation depends on browser certificate trust. Accounts requiring a password change must change it in the desktop app first. Password changes, logout, and database restore invalidate mobile sessions.
+
+Existing databases upgrade automatically after a safety backup. Payment business dates are backfilled from the sale/return date; historical void refunds use their recorded timestamp interpreted in the computer's local timezone. Old batch sources cannot be reconstructed.
+
 ## Backup and recovery
 
 - Database: `%APPDATA%/Nayaro POS/data/srmart.sqlite` on Windows (`~/Library/Application Support/…` on macOS); shown in *Backup*.
 - Backups default to `Documents/Nayaro POS Backups` (a different folder). Choose a **USB drive or second disk**
   in *Backup → Change folder*; the app warns while backups are on the same disk.
-- Automatic: once a day at start-up, on every app exit, before migrations, before demo reset/go-live, and before a restore.
+- Automatic: daily while the app is running (also checked on startup and system resume), on every app exit, before migrations, before demo reset/go-live, and before a restore.
 - Each backup is a `VACUUM INTO` snapshot written to a temporary file, fsynced, integrity-checked, then
   renamed to a **new unique name** — an existing backup is never overwritten. Retention (default 30) never
   deletes the newest verified backup or pre-restore safety copies.
@@ -139,16 +155,16 @@ Nothing below is verified yet.
 - [ ] (Optional) mobile dashboard on shop Wi-Fi / VPN
 
 ## Known limitations
-- Not reviewed for production security; not penetration-tested. Plain HTTP for the optional LAN mobile server.
+- Not reviewed for production security; not penetration-tested. The optional LAN mobile server uses HTTPS with a local self-signed certificate; phones must trust it.
 - **No tax is configured** and invoice format/numbering are unverified for IRD/CBMS — compliance gate in Settings.
 - Quantities are whole units (no weighing scale; loose goods must be pre-packed).
 - One payment method per sale (no split payments); non-cash methods are only recorded, no gateway integration.
-- Batch/expiry quantities are informational (FEFO-decremented on sale; voids/returns do not restore batch quantities).
+- New sales record FEFO batch allocations, restored on voids and restocked returns. Legacy sales have no batch allocation history: their returns restore product stock only. Positive stock adjustments remain unbatched.
 - No customer credit (udharo) or loyalty points; customers are recorded only for lucky-draw schemes. No multi-store, no cloud sync (only a `sync_outbox` scaffold).
 - Phone-scanner pairings are kept in memory (re-pair after an app restart); the phone must accept a self-signed certificate warning.
 - No buy-X-get-Y or per-product promotions yet (offers are store-wide or per category).
 - Printing uses OS drivers; no direct ESC/POS commands or cash-drawer kick yet.
-- Unpaid carts are not persisted across restarts (by design: nothing is recorded until payment).
+- Checkout autosaves unpaid drafts per cashier. Wait for “Cart saved on this computer” before quitting; an abrupt power loss can lose a change still marked “Saving”. Drafts reserve no stock and do not create sales or payments.
 - Installer packaging (`npm run dist`) and Windows-specific behaviour have not been tested in this environment.
 
 ## Production deployment steps
@@ -163,7 +179,7 @@ Nothing below is verified yet.
 9. Train staff on voids/returns/approvals; keep a UPS on the counter PC and printer.
 
 ## Tests
-`npm test` runs 31 tests against real file-backed SQLite databases, covering the acceptance criteria:
+`npm test` runs the backend regression suite against real file-backed SQLite databases, covering the acceptance criteria:
 internal barcode generation, duplicate barcode rejection, sticker/shelf label rendering, scanning at current
 price, mixed-item checkout totals/receipt/stock, atomic rollback on a simulated mid-transaction failure,
 offline sale with network stubbed to fail + restart persistence, purchase receiving, controlled void/return

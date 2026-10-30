@@ -312,11 +312,14 @@ export interface AppInfo {
 }
 
 export interface SalesTotals {
+  /** Sales made in the period, including sales later reversed. */
   salesCount: number;
   grossSalesPaisa: number;
   discountPaisa: number;
   taxPaisa: number;
+  /** Excludes tax; returns and voids reduce revenue on their activity date. */
   netSalesPaisa: number;
+  /** Actual money refunded in the period, including tax. */
   refundsPaisa: number;
   costOfGoodsPaisa: number;
   estimatedMarginPaisa: number;
@@ -522,4 +525,31 @@ export interface ScannerEvent {
   code: string;
   device: string;
   at: string;
+}
+
+export interface CashShift {
+  id: number;
+  openedBy: number;
+  openedByName: string;
+  openedAt: string;
+  openingPaisa: number;
+  closedByName: string | null;
+  closedAt: string | null;
+  countedPaisa: number | null;
+  expectedPaisa: number;
+  variancePaisa: number | null;
+  closingNote: string | null;
+  payments: { method: string; receivedPaisa: number; refundedPaisa: number }[];
+  cashInPaisa: number;
+  cashOutPaisa: number;
+  movements: { id: number; kind: 'in' | 'out'; amountPaisa: number; reason: string; userName: string; createdAt: string }[];
+}
+export interface SavedCart {
+  id: string;
+  name: string;
+  state: 'current' | 'parked';
+  revision: number;
+  updatedAt: string;
+  orderDiscountPaisa: number;
+  lines: { productId: number; quantity: number; discountPaisa: number; name: string; sku: string; unit: string; unitPricePaisa: number; qtyAvailable: number }[];
 }

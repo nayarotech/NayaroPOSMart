@@ -15,6 +15,7 @@ import { Pos } from './pages/Pos';
 import { Products } from './pages/Products';
 import { Purchases } from './pages/Purchases';
 import { Reports } from './pages/Reports';
+import { Shifts } from './pages/Shifts';
 import { Sales } from './pages/Sales';
 import { SettingsPage } from './pages/Settings';
 import { Users } from './pages/Users';
@@ -30,6 +31,7 @@ function Routed() {
       <Routes>
         <Route path="/pos" element={<Pos />} />
         <Route path="/dashboard" element={admin(<Dashboard />)} />
+        <Route path="/shifts" element={<Shifts />} />
         <Route path="/sales" element={<Sales />} />
         <Route path="/products" element={<Products />} />
         <Route path="/labels" element={<Labels />} />

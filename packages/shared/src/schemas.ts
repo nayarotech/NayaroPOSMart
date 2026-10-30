@@ -308,3 +308,27 @@ export type AppSettings = z.output<typeof settingsSchema>;
 export type LabelJob = z.input<typeof labelJobSchema>;
 export type Credentials = z.input<typeof credentialsSchema>;
 export type LabelSize = z.output<typeof labelSize>;
+
+export const openShiftSchema = z.object({ openingPaisa: paisa });
+export const cashMovementSchema = z.object({
+  shiftId: id, clientTxnId: z.string().uuid(), kind: z.enum(['in', 'out']),
+  amountPaisa: paisa.refine((n) => n > 0, 'Amount must be greater than zero'),
+  reason: z.string().trim().min(3, 'Give a short reason').max(300),
+});
+export const closeShiftSchema = z.object({
+  shiftId: id, countedPaisa: paisa,
+  expectedPaisa: z.number().int().min(-1_000_000_000_000).max(1_000_000_000_000),
+  note: z.string().trim().max(300).default(''),
+});
+export const cartSaveSchema = z.object({
+  id: z.string().uuid(), revision: z.number().int().min(0),
+  lines: z.array(cartLineSchema).max(300), orderDiscountPaisa: paisa.default(0),
+});
+export const cartActionSchema = z.object({ id: z.string().uuid(), revision: z.number().int().positive() });
+export const parkCartSchema = cartActionSchema.extend({ name: z.string().trim().min(1, 'Name this cart').max(80) });
+export type OpenShiftInput = z.input<typeof openShiftSchema>;
+export type CashMovementInput = z.input<typeof cashMovementSchema>;
+export type CloseShiftInput = z.input<typeof closeShiftSchema>;
+export type CartSaveInput = z.input<typeof cartSaveSchema>;
+export type CartActionInput = z.input<typeof cartActionSchema>;
+export type ParkCartInput = z.input<typeof parkCartSchema>;

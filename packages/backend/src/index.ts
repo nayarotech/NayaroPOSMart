@@ -15,3 +15,5 @@ export { MobileServer, lanUrls } from './api/mobileServer';
 export { ScannerServer, qrSvg, type ScanResult } from './api/scannerServer';
 export { ensureCertificate } from './api/tls';
 export { maskPhone } from './render/receipt';
+
+export { renderShiftHtml } from './render/shift';

@@ -91,7 +91,8 @@ export class StockRepo {
   }
 
   /** First-expiry-first-out consumption of batch quantities (informational; product qty is authoritative). */
-  consumeBatches(productId: number, qty: number) {
+  consumeBatches(productId: number, qty: number, saleItemId?: number) {
+    if (!this.ctx.db.inTransaction) throw new Error('Batch consumption requires a transaction');
     let left = qty;
     const batches = this.ctx.db
       .prepare(`SELECT id, qty_remaining FROM product_batches WHERE product_id = ? AND qty_remaining > 0 ORDER BY expiry_date IS NULL, expiry_date, id`)
@@ -101,8 +102,23 @@ export class StockRepo {
       if (left <= 0) break;
       const take = Math.min(left, b.qty_remaining);
       upd.run(b.qty_remaining - take, b.id);
+      if (saleItemId) this.ctx.db.prepare('INSERT INTO sale_batch_allocations (sale_item_id, batch_id, quantity) VALUES (?, ?, ?)').run(saleItemId, b.id, take);
       left -= take;
     }
+    if (saleItemId && left > 0) this.ctx.db.prepare('INSERT INTO sale_batch_allocations (sale_item_id, batch_id, quantity) VALUES (?, NULL, ?)').run(saleItemId, left);
+  }
+
+  /** Restore only the units being restocked. Returned-but-discarded units still advance the offset. */
+  restoreSaleBatches(saleItemId: number, previouslyReturned: number, qty: number) {
+    if (!this.ctx.db.inTransaction) throw new Error('Batch restoration requires a transaction');
+    const allocations = this.ctx.db.prepare('SELECT batch_id, quantity FROM sale_batch_allocations WHERE sale_item_id = ? ORDER BY id').all(saleItemId) as { batch_id: number | null; quantity: number }[];
+    let offset = 0;
+    for (const a of allocations) {
+      const overlap = Math.max(0, Math.min(offset + a.quantity, previouslyReturned + qty) - Math.max(offset, previouslyReturned));
+      if (overlap && a.batch_id !== null) this.ctx.db.prepare('UPDATE product_batches SET qty_remaining = qty_remaining + ? WHERE id = ?').run(overlap, a.batch_id);
+      offset += a.quantity;
+    }
+    // Legacy sales have no allocations: leave batch quantities unchanged rather than guess their source.
   }
 
   expiring(withinDays: number, today: string): Batch[] {

@@ -38,6 +38,20 @@ export interface ApiMap {
   'labels.print': { in: S.LabelJob & { mode: 'dialog' | 'pdf' | 'silent' }; out: T.PrintResult };
   'printers.list': { in: Empty; out: T.PrinterInfo[] };
 
+  'shifts.current': { in: Empty; out: T.CashShift | null };
+  'shifts.list': { in: Empty; out: T.CashShift[] };
+  'shifts.get': { in: { id: number }; out: T.CashShift };
+  'shifts.open': { in: S.OpenShiftInput; out: T.CashShift };
+  'shifts.move': { in: S.CashMovementInput; out: T.CashShift };
+  'shifts.close': { in: S.CloseShiftInput; out: T.CashShift };
+  'shifts.print': { in: { id: number; mode: 'dialog' | 'pdf' }; out: T.PrintResult };
+  'carts.current': { in: Empty; out: T.SavedCart | null };
+  'carts.list': { in: Empty; out: T.SavedCart[] };
+  'carts.save': { in: S.CartSaveInput; out: T.SavedCart };
+  'carts.park': { in: S.ParkCartInput; out: T.SavedCart };
+  'carts.resume': { in: S.CartActionInput; out: T.SavedCart };
+  'carts.discard': { in: S.CartActionInput; out: { ok: true } };
+
   'sales.quote': { in: S.SaleQuoteInput; out: T.SaleQuote };
   'sales.complete': { in: S.CompleteSaleInput; out: T.SaleDetail };
   'sales.list': { in: S.SalesQuery; out: T.Page<T.SaleSummary> };
@@ -119,6 +133,8 @@ export const API_CHANNELS = [
   'products.lookupBarcode', 'products.search', 'products.importCsv', 'products.exportCsv',
   'barcodes.add', 'barcodes.generateInternal', 'barcodes.remove', 'barcodes.setPrimary',
   'labels.render', 'labels.print', 'printers.list',
+  'shifts.current', 'shifts.list', 'shifts.get', 'shifts.open', 'shifts.move', 'shifts.close', 'shifts.print',
+  'carts.current', 'carts.list', 'carts.save', 'carts.park', 'carts.resume', 'carts.discard',
   'sales.quote', 'sales.complete', 'sales.list', 'sales.get', 'sales.void', 'sales.return',
   'receipts.render', 'receipts.print',
   'suppliers.list', 'suppliers.create', 'suppliers.update',

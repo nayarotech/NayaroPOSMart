@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, Menu, session, shell } from 'electron';
+import { app, BrowserWindow, dialog, Menu, powerMonitor, session, shell } from 'electron';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { AppState } from './appState';
@@ -12,6 +12,7 @@ const rendererIndex = path.join(__dirname, 'renderer', 'index.html');
 const rendererBase = pathToFileURL(path.dirname(rendererIndex)).href;
 
 let mainWindow: BrowserWindow | null = null;
+let backupTimer: ReturnType<typeof setInterval> | null = null;
 const state = new AppState();
 
 function isTrustedUrl(url: string) {
@@ -95,8 +96,23 @@ app.whenReady().then(async () => {
     return;
   }
   // Daily safety backup on start if the newest one is older than 24 h.
-  const newest = state.backups.list()[0];
-  if (!newest || Date.now() - new Date(newest.createdAt).getTime() > 86_400_000) state.autoBackup('auto-daily');
+  let lastBackupWarning = 0;
+  const checkDailyBackup = () => {
+    try {
+      const newest = state.backups.list()[0];
+      if (!newest || Date.now() - new Date(newest.createdAt).getTime() >= 86_400_000) {
+        const backup = state.autoBackup('auto-daily');
+        if (!backup && Date.now() - lastBackupWarning >= 3_600_000) {
+          lastBackupWarning = Date.now();
+          void dialog.showMessageBox({ type: 'warning', title: 'Backup failed', message: 'The daily backup could not be created. Check the backup folder and available disk space in Backup.' });
+        }
+      }
+    } catch (err) { log.error(`daily backup check failed: ${(err as Error).message}`); }
+  };
+  checkDailyBackup();
+  backupTimer = setInterval(checkDailyBackup, 60_000);
+  backupTimer.unref();
+  powerMonitor.on('resume', checkDailyBackup);
 
   const printers = new PrinterService(() => mainWindow);
   registerIpc(state, printers, isTrustedUrl);
@@ -111,6 +127,8 @@ let quitting = false;
 app.on('before-quit', (e) => {
   if (quitting || SMOKE) return;
   quitting = true;
+  if (backupTimer) clearInterval(backupTimer);
+  powerMonitor.removeAllListeners('resume');
   e.preventDefault();
   (async () => {
     try {

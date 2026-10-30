@@ -1,4 +1,6 @@
 import path from 'node:path';
+import https from 'node:https';
+import { ensureCertificate } from '../src/api/tls';
 import { afterEach, describe, expect, it } from 'vitest';
 import { FixedClock } from '../src/clock';
 import { openDatabase, type DB } from '../src/db/database';
@@ -79,9 +81,19 @@ describe('mobile admin API', () => {
   it('lets admins read the summary, rejects cashiers, and is read-only', async () => {
     const { svc } = seeded();
     const port = 18000 + Math.floor(Math.random() * 1000);
-    const server = new MobileServer({ services: () => svc, staticDir: null, port, host: '127.0.0.1' });
+    const tls = await ensureCertificate(path.join(tmpDir(), 'certs'));
+    const server = new MobileServer({ services: () => svc, staticDir: null, port, host: '127.0.0.1', tls });
     await server.start();
-    const base = `http://127.0.0.1:${port}`;
+    const base = `https://127.0.0.1:${port}`;
+    const fetch = (url: string, opts: { method?: string; headers?: Record<string, string>; body?: string } = {}): Promise<{ status: number; json: () => Promise<unknown> }> => new Promise((resolve, reject) => {
+      const request = https.request(url, { ...opts, rejectUnauthorized: false }, (res) => {
+        let body = '';
+        res.on('data', (chunk) => { body += chunk; });
+        res.on('end', () => resolve({ status: res.statusCode ?? 0, json: async () => JSON.parse(body) }));
+      });
+      request.on('error', reject);
+      request.end(opts.body);
+    });
     try {
       const post = (u: string, body: unknown) => fetch(base + u, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       expect((await post('/api/login', { username: 'cashier', password: DEMO_USERS[1]!.password })).status).toBe(403);
@@ -99,6 +111,18 @@ describe('mobile admin API', () => {
       expect(sales.rows.length).toBeGreaterThan(0);
       expect((await fetch(`${base}/api/sales/${sales.rows[0]!.id}`, auth)).status).toBe(200);
       expect((await fetch(`${base}/api/sales`, { method: 'DELETE', ...auth })).status).toBe(405);
+      // A changed credential invalidates existing tokens even if the account stays active.
+      svc.auth.changePassword(svc.auth.login({ username: 'admin', password: DEMO_USERS[0]!.password }), DEMO_USERS[0]!.password, 'Changed-password-1');
+      expect((await fetch(`${base}/api/summary`, auth)).status).toBe(401);
+      const second = await post('/api/login', { username: 'admin', password: 'Changed-password-1' });
+      const nextToken = (await second.json() as { token: string }).token;
+      expect((await post('/api/logout', {})).status).toBe(200);
+      const nextAuth = { headers: { Authorization: `Bearer ${nextToken}` } };
+      expect((await fetch(`${base}/api/logout`, { method: 'POST', ...nextAuth })).status).toBe(200);
+      expect((await fetch(`${base}/api/summary`, nextAuth)).status).toBe(401);
+      db.prepare("UPDATE users SET must_change_password = 1 WHERE username = 'admin'").run();
+      expect((await post('/api/login', { username: 'admin', password: 'Changed-password-1' })).status).toBe(403);
+
     } finally {
       await server.stop();
     }

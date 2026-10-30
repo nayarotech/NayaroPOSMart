@@ -93,6 +93,7 @@ export class AuthService {
   /** Supervisor override: an active admin re-enters credentials to approve a restricted action. */
   verifyOverride(input: unknown, purpose: string): UserRecord {
     const approver = this.verify(input, { audit: `override:${purpose}` });
+    if (approver.mustChangePassword) throw forbidden('Change your password before approving transactions');
     if (approver.role !== 'admin') throw forbidden('Approval must come from an administrator account');
     return approver;
   }

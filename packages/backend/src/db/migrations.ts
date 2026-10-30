@@ -430,6 +430,95 @@ WHEN OLD.is_demo = 0 AND NOT EXISTS (SELECT 1 FROM app_settings WHERE key = '__w
 BEGIN SELECT RAISE(ABORT, 'Draw results cannot be deleted.'); END;
 `,
   },
+  {
+    version: 3,
+    name: 'sale batch allocations and payment business dates',
+    sql: `
+CREATE TABLE sale_batch_allocations (
+  id INTEGER PRIMARY KEY,
+  sale_item_id INTEGER NOT NULL REFERENCES sale_items(id) ON DELETE CASCADE,
+  batch_id INTEGER REFERENCES product_batches(id) ON DELETE RESTRICT,
+  quantity INTEGER NOT NULL CHECK (quantity > 0)
+);
+CREATE INDEX idx_batch_allocations_item ON sale_batch_allocations(sale_item_id);
+CREATE INDEX idx_return_items_sale_item ON sales_return_items(sale_item_id, id);
+DROP TRIGGER trg_payments_immutable;
+ALTER TABLE payments ADD COLUMN business_date TEXT;
+UPDATE payments SET business_date = COALESCE(
+  (SELECT business_date FROM sales_returns WHERE id = payments.return_id),
+  CASE WHEN kind = 'payment' THEN (SELECT business_date FROM sales WHERE id = payments.sale_id)
+       ELSE date(created_at, 'localtime') END
+);
+CREATE INDEX idx_payments_business_date ON payments(business_date);
+CREATE TRIGGER trg_payments_immutable BEFORE UPDATE ON payments
+BEGIN SELECT RAISE(ABORT, 'Payment records are immutable.'); END;
+`,
+  },
+  {
+    version: 4,
+    name: 'cash shifts and persistent checkout carts',
+    sql: `
+CREATE TABLE cash_shifts (
+  id INTEGER PRIMARY KEY,
+  opened_by INTEGER NOT NULL REFERENCES users(id),
+  opened_at TEXT NOT NULL,
+  opening_paisa INTEGER NOT NULL CHECK (opening_paisa >= 0),
+  closed_by INTEGER REFERENCES users(id),
+  closed_at TEXT,
+  counted_paisa INTEGER CHECK (counted_paisa >= 0),
+  expected_paisa INTEGER,
+  closing_note TEXT,
+  is_demo INTEGER NOT NULL DEFAULT 0,
+  CHECK ((closed_at IS NULL AND closed_by IS NULL AND counted_paisa IS NULL AND expected_paisa IS NULL)
+    OR (closed_at IS NOT NULL AND closed_by IS NOT NULL AND counted_paisa IS NOT NULL AND expected_paisa IS NOT NULL))
+);
+CREATE UNIQUE INDEX idx_one_open_shift ON cash_shifts((1)) WHERE closed_at IS NULL;
+CREATE TABLE cash_movements (
+  id INTEGER PRIMARY KEY,
+  client_txn_id TEXT NOT NULL UNIQUE,
+  shift_id INTEGER NOT NULL REFERENCES cash_shifts(id),
+  kind TEXT NOT NULL CHECK (kind IN ('in','out')),
+  amount_paisa INTEGER NOT NULL CHECK (amount_paisa > 0),
+  reason TEXT NOT NULL,
+  created_by INTEGER NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL
+);
+CREATE INDEX idx_cash_movements_shift ON cash_movements(shift_id);
+ALTER TABLE payments ADD COLUMN shift_id INTEGER REFERENCES cash_shifts(id);
+CREATE INDEX idx_payments_shift ON payments(shift_id);
+CREATE TRIGGER trg_payment_open_shift BEFORE INSERT ON payments
+WHEN NEW.shift_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM cash_shifts WHERE id = NEW.shift_id AND closed_at IS NULL)
+BEGIN SELECT RAISE(ABORT, 'Cannot post a payment to a closed shift.'); END;
+CREATE TRIGGER trg_cash_movement_open BEFORE INSERT ON cash_movements
+WHEN NOT EXISTS (SELECT 1 FROM cash_shifts WHERE id = NEW.shift_id AND closed_at IS NULL)
+BEGIN SELECT RAISE(ABORT, 'Cannot post cash to a closed shift.'); END;
+CREATE TRIGGER trg_cash_movement_immutable BEFORE UPDATE ON cash_movements
+BEGIN SELECT RAISE(ABORT, 'Cash movements are immutable.'); END;
+CREATE TRIGGER trg_cash_movement_no_delete BEFORE DELETE ON cash_movements
+WHEN NOT EXISTS (SELECT 1 FROM app_settings WHERE key = '__wipe_authorized')
+BEGIN SELECT RAISE(ABORT, 'Cash movements cannot be deleted.'); END;
+CREATE TRIGGER trg_closed_shift_immutable BEFORE UPDATE ON cash_shifts
+WHEN OLD.closed_at IS NOT NULL
+BEGIN SELECT RAISE(ABORT, 'Closed shifts are immutable.'); END;
+CREATE TRIGGER trg_shift_opening_immutable BEFORE UPDATE OF opened_by, opened_at, opening_paisa ON cash_shifts
+BEGIN SELECT RAISE(ABORT, 'Shift opening is immutable.'); END;
+CREATE TRIGGER trg_shift_no_delete BEFORE DELETE ON cash_shifts
+WHEN NOT EXISTS (SELECT 1 FROM app_settings WHERE key = '__wipe_authorized')
+BEGIN SELECT RAISE(ABORT, 'Shifts cannot be deleted.'); END;
+CREATE TABLE checkout_carts (
+  id TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  name TEXT NOT NULL DEFAULT '',
+  state TEXT NOT NULL CHECK (state IN ('current','parked','completed','discarded')),
+  payload TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX idx_one_current_cart ON checkout_carts(user_id) WHERE state = 'current';
+CREATE INDEX idx_carts_user_state ON checkout_carts(user_id, state);
+`,
+  },
 ];
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version;

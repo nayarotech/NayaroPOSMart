@@ -8,8 +8,9 @@ import { seedDemoData } from '../seed/demo';
 import { AuthService, requireRole } from './auth';
 
 const OPERATIONAL_TABLES = [
+  'checkout_carts', 'cash_movements',
   'scheme_winners', 'scheme_entries',
-  'sales_return_items', 'payments', 'sales_returns', 'sale_items', 'sales',
+  'sale_batch_allocations', 'sales_return_items', 'payments', 'sales_returns', 'sale_items', 'sales', 'cash_shifts',
   'promotions', 'schemes', 'customers',
   'product_batches', 'stock_movements', 'purchase_items', 'purchases',
   'product_prices', 'product_barcodes', 'products', 'categories', 'suppliers',
